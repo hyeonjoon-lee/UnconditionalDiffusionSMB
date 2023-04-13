@@ -1,0 +1,8 @@
+/test.py
+/test1.py
+/old_modules.py
+
+/logs/
+/models/
+
+*.npz
