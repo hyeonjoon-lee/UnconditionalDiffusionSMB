@@ -1,4 +1,4 @@
-import os, sys
+import os
 import numpy as np
 import torch
 import torch.optim as optim
@@ -77,7 +77,12 @@ def train(args):
 
     print(summary(model, torch.zeros((64, 11, 14, 14)).to(args.device), diffusion.sample_timesteps(64).to(args.device), show_input=True))
 
-    for epoch in range(1, args.epochs+1):
+    if args.resume_from != 0:
+        checkpoint = torch.load(os.path.join(model_path, f'ckpt_{args.resume_from}'))
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    for epoch in range(args.resume_from+1, args.resume_from+args.epochs+1):
         logging.info(f"Starting epoch {epoch}:")
         epoch_loss = {'rec_loss': 0, 'mse': 0, 'loss': 0}
         pbar = tqdm(dataloader)
@@ -115,7 +120,15 @@ def train(args):
         plot_training_images(epoch, original_img, x_t, noise.argmax(dim=1), predicted_noise.argmax(dim=1), reconstructed_img, training_result_path)
 
         if epoch % 100 == 0:
-            torch.save(model.state_dict(), os.path.join(model_path, f"ckpt_{epoch:04d}.pt"))
+            # torch.save(model.state_dict(), os.path.join(model_path, f"ckpt_{epoch:04d}.pt"))
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'Epoch_Rec_loss': epoch_loss['rec_loss']/l,
+                'Epoch_MSE': epoch_loss['mse']/l,
+                'Epoch_LOSS': epoch_loss['loss']/l
+            }, os.path.join(model_path, f"ckpt_{epoch}.pt"))
 
 def launch():
     parser = argparse.ArgumentParser()
@@ -127,6 +140,7 @@ def launch():
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--beta_schedule", type=str, default="quadratic", choices=['linear', 'quadratic', 'sigmoid'])
     parser.add_argument("--run_name", type=str, default=f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}")
+    parser.add_argument("--resume_from", type=int, default=0)
     args = parser.parse_args()
     train(args)
 

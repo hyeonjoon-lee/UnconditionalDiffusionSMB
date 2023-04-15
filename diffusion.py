@@ -1,6 +1,14 @@
 import torch
 from torch.distributions import Categorical
-from tqdm import tqdm, trange
+from tqdm import trange
+from dataset import create_dataloader
+from utils.plot import get_img_from_level
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+from pathlib import Path
+
+DATAPATH = os.path.join(Path(__file__).parent.resolve(), "levels", "ground", "unique_onehot.npz")
 
 class Diffusion:
     def __init__(self, noise_steps=1000, beta_start=1e-4, beta_end=0.02, img_size=14, device="cuda", schedule='linear'):
@@ -82,3 +90,15 @@ class Diffusion:
                     imgs.append(x)
         model.train()
         return imgs
+    
+if __name__ == '__main__':
+    diffusion = Diffusion(schedule='quadratic')
+    data = create_dataloader(DATAPATH).dataset.data
+    noise = torch.randn((11, 14, 14))
+    level = data[-15]
+    for t in [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]:
+        noised_level = diffusion.noise_images(torch.tensor(level).to("cuda"), torch.tensor([t]).to("cuda"))[0]
+        noised_level = noised_level[0].cpu().numpy()
+        noised_level = np.argmax(noised_level, axis=0)
+        plt.imshow(get_img_from_level(noised_level))
+        plt.show()
