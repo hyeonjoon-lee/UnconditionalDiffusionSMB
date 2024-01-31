@@ -3,15 +3,15 @@ from typing import List
 from itertools import product
 import json
 import numpy as np
-import os
+import os, sys
 import glob
 from pathlib import Path
 import multiprocessing
 from multiprocessing import Pool
 
-filepath = Path(__file__).parent.parent
+filepath = Path(__file__).parent.parent.parent
 JARFILE_PATH = os.path.join(filepath, "simulator.jar")
-DATA_PATH = os.path.join(filepath, "levels", "ground")
+DATA_PATH = os.path.join(filepath, "paths")
 
 encoding = {
     "X": 0,
@@ -26,7 +26,8 @@ encoding = {
     "]": 9,
     "o": 10,
     "B": 2,
-    "b": 2
+    "b": 2,
+    "x": 11
 }
 
 def level_to_arr(level_txt):
@@ -49,7 +50,7 @@ def level_to_arr(level_txt):
     # Convert the windowed level to a 3D NumPy array and return it
     return np.array(window_lev)
 
-def levels_to_onehot(levels: np.ndarray, n_sprites: int=11):
+def levels_to_onehot(levels: np.ndarray, n_sprites: int=12):
     batch_size, h, w = levels.shape
     onehot = np.zeros((batch_size, n_sprites, h, w))
 
@@ -64,7 +65,7 @@ def levels_to_onehot(levels: np.ndarray, n_sprites: int=11):
 
     return onehot
 
-def txt_to_onehot(path: str, target: str, unique: bool=False):
+def txt_to_onehot(path: str, unique: bool=False):
     files = glob.glob(os.path.join(path, '*.txt'))
     levels = np.empty((0, 14, 14), dtype=int)
 
@@ -75,17 +76,63 @@ def txt_to_onehot(path: str, target: str, unique: bool=False):
     # Fill in the levels array with the preprocessed levels
     for _, level in enumerate(results):
         levels = np.concatenate((levels, level), axis=0)
-
+    print("Before unique: ", levels.shape)
     if unique:
-        u, ind = np.unique(levels, return_index=True, axis=0)
-        levels = u[np.argsort(ind)]
-        target = 'unique_' + target
+        levels = np.unique(levels, return_index=False, axis=0)
+
+    print("After unique: ", levels.shape)
+
+    # Update the path in the levels array to reflect diagonal movement
+    for i in range(levels.shape[0]):
+        for j in range(levels.shape[2]):
+            column = levels[i, :, j]
+            ind = np.where(column==11)[0] if np.where(column==11)[0].size > 1 else None
+            if ind is not None:
+                if j == levels.shape[2]-1:
+                    column[column==11] = 2
+                    column[ind[-1]] = 11
+                    levels[i, :, j] = column
+                else:
+                    if levels[i, ind[0], j+1] == 11:
+                        column[ind[0]] = 2
+                        levels[i, :, j] = column
+
+    # Count the number of levels that have less than ten 11s (x)
+    print("Number of levels with less than five 11s: ", np.count_nonzero(np.count_nonzero(levels==11, axis=(1, 2))<10))
+
+    # Remove levels that have less than ten 11s (x)
+    levels = levels[np.count_nonzero(levels==11, axis=(1, 2)) >= 10]
+    print("After removing levels with less than five 11s: ", levels.shape)
+
+    # Shuffle the levels
+    np.random.shuffle(levels)
 
     # Convert levels to one-hot encoded arrays
     onehot = levels_to_onehot(levels)
 
-    # Save one-hot encoded arrays as .npz file
-    np.savez(os.path.join(DATA_PATH, target), levels=onehot)
+    # Extract only 11s (x) from levels and set data type to int
+    paths = onehot[:, 11, :, :].astype(int)
+
+    levels = np.argmax(onehot, axis=1)
+    # Change all 11s (x) to 2s (-)
+    levels[levels==11] = 2
+    onehot_levels = levels_to_onehot(levels, n_sprites=11)
+
+    print("Paths shape: ", paths.shape)
+    print("Onehot Levels shape: ", onehot_levels.shape)
+
+    # Divide the levels and paths into training and validation sets
+    train_size = int(0.8 * onehot_levels.shape[0])
+    train_levels = onehot_levels[:train_size]
+    train_paths = paths[:train_size]
+    val_levels = onehot_levels[train_size:]
+    val_paths = paths[train_size:]
+
+    # Save one-hot encoded arrays as .npy file
+    np.save(os.path.join(DATA_PATH, 'train_maps'), train_levels)
+    np.save(os.path.join(DATA_PATH, 'train_shortest_paths'), train_paths)
+    np.save(os.path.join(DATA_PATH, 'val_maps'), val_levels)
+    np.save(os.path.join(DATA_PATH, 'val_shortest_paths'), val_paths)
 
 def run_level(
     level: str,
@@ -134,19 +181,13 @@ def test_level_from_int_array(
     )
 
 if __name__ == '__main__':
-    # txt_to_onehot(path=DATA_PATH, target='onehot', unique=True)
+    txt_to_onehot(path=DATA_PATH, unique=True)
+    
+    # # open npy file and display levels and paths
+    # levels = np.load(os.path.join(DATA_PATH, 'unique_onehot.npy'))
+    # paths = np.load(os.path.join(DATA_PATH, 'unique_paths.npy'))
 
-    with np.load(os.path.join(DATA_PATH, 'onehot.npz')) as data:
-        levels = data['levels']
-        levels = np.argmax(levels, axis=1)
-        unique = np.unique(levels, axis=0)
-
-        print('all levels: {}'.format(levels.shape))
-        print('unique levels: {}\n'.format(unique.shape))
-        
-        for i in range(11):
-            print('>>> no. of {}'.format(i))
-            print('in all levels: \t\t{}'.format(np.count_nonzero(levels==i)))
-            print('in unique levels: \t{}\n'.format(np.count_nonzero(unique==i)))
-
-        test_level_from_int_array(levels[-1])
+    # for i in [2600, 2700, 2800]:
+    #     print(np.argmax(levels[i], axis=0)) 
+    #     print(paths[i])
+    #     print()
